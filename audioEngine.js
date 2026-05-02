@@ -1,5 +1,6 @@
 const VOICE_RATIOS = [1, 1.125, 1.25, 1.5, 1.75, 2.25];
 const MAX_VOICES = VOICE_RATIOS.length;
+const CONTROL_UPDATE_MS = 33;
 
 const clamp = (value, min = 0, max = 1) => Math.min(max, Math.max(min, value));
 const norm = (value, min, max) => clamp((value - min) / (max - min));
@@ -39,6 +40,7 @@ class CellFlowAudioEngine {
         this.voices = [];
         this.started = false;
         this.grainTimer = null;
+        this.controlTimer = null;
         this.latestParams = null;
         this.lastGrainTime = 0;
         this.saturatorAmount = null;
@@ -58,6 +60,7 @@ class CellFlowAudioEngine {
         this.started = true;
         this.update(params || this.latestParams || {});
         this.startGrainScheduler();
+        this.startControlLoop();
     }
 
     stop() {
@@ -66,12 +69,15 @@ class CellFlowAudioEngine {
         const now = this.context.currentTime;
         setParam(this.master.gain, 0.0001, now, 0.08);
         clearInterval(this.grainTimer);
+        clearInterval(this.controlTimer);
         this.grainTimer = null;
+        this.controlTimer = null;
 
         window.setTimeout(() => {
             this.voices.forEach((voice) => {
                 voice.carrier.stop();
                 voice.modulator.stop();
+                voice.partial.stop();
             });
             this.noiseSource.stop();
             this.voices = [];
@@ -166,6 +172,9 @@ class CellFlowAudioEngine {
             const carrier = ctx.createOscillator();
             const modulator = ctx.createOscillator();
             const modGain = ctx.createGain();
+            const partial = ctx.createOscillator();
+            const partialFilter = ctx.createBiquadFilter();
+            const partialGain = ctx.createGain();
             const filter = ctx.createBiquadFilter();
             const panner = ctx.createStereoPanner();
             const gain = ctx.createGain();
@@ -173,15 +182,23 @@ class CellFlowAudioEngine {
 
             carrier.type = i % 2 === 0 ? 'sine' : 'triangle';
             modulator.type = 'sine';
+            partial.type = i % 2 === 0 ? 'triangle' : 'sine';
+            partialFilter.type = 'bandpass';
+            partialFilter.frequency.value = 1200;
+            partialFilter.Q.value = 2;
             filter.type = i % 3 === 0 ? 'bandpass' : 'lowpass';
             filter.Q.value = 2.2;
+            partialGain.gain.value = 0.0001;
             gain.gain.value = 0.0001;
             delaySend.gain.value = 0.08;
 
             modulator.connect(modGain);
             modGain.connect(carrier.frequency);
+            partial.connect(partialFilter);
+            partialFilter.connect(partialGain);
             carrier.connect(filter);
             filter.connect(panner);
+            partialGain.connect(panner);
             panner.connect(gain);
             gain.connect(this.master);
             gain.connect(delaySend);
@@ -189,7 +206,19 @@ class CellFlowAudioEngine {
 
             carrier.start();
             modulator.start();
-            this.voices.push({ carrier, modulator, modGain, filter, panner, gain, delaySend });
+            partial.start();
+            this.voices.push({
+                carrier,
+                modulator,
+                modGain,
+                partial,
+                partialFilter,
+                partialGain,
+                filter,
+                panner,
+                gain,
+                delaySend
+            });
         }
     }
 
@@ -238,30 +267,33 @@ class CellFlowAudioEngine {
         const forceSpread = Math.abs(params.forceRange ?? 0.28);
         const forceBias = norm(params.forceBias ?? -0.2, -1, 0);
         const orbitRatio = norm(params.ratio ?? 0, -2, 2);
-        const pulseDepth = Math.abs(params.lfoA ?? 0);
-        const pulseRate = norm(params.lfoS ?? 0.1, 0.1, 10);
+        const lfoDepth = params.lfoA ?? 0;
+        const pulseDepth = Math.abs(lfoDepth);
         const drive = norm(params.forceMultiplier ?? 2.33, 0, 5);
         const spectralBalance = norm(params.balance ?? 0.79, 0.01, 1.5);
         const foldOffset = norm(params.forceOffset ?? 0, -1, 1);
+        const sharedLfo = this.getSharedLfo(params);
+        const unipolarLfo = (sharedLfo + 1) * 0.5;
+        const richness = Math.pow(particleDensity, 0.72);
 
         const activeVoices = Math.max(1, Math.round(typeCount));
         const baseFrequency = 34 + radius * 72 + forceBias * 32;
-        const masterLevel = 0.12 + drive * 0.08 + particleDensity * 0.04;
-        const filterBase = 180 + spectralBalance * 3200 + radius * 900 + pressure * 700;
+        const masterLevel = 0.105 + drive * 0.06 + richness * 0.035;
+        const filterBase = 180 + spectralBalance * 3000 + radius * 900 + pressure * 620 + unipolarLfo * pulseDepth * 1600;
         const q = 0.8 + cohesion * 8 + (1 - damping) * 3;
-        const fmDepth = 8 + pressure * 90 + drive * 75 + forceSpread * 55;
-        const pulse = 0.65 + Math.sin(now * (0.4 + pulseRate * 8)) * pulseDepth * 0.25;
+        const fmDepth = 7 + pressure * 72 + drive * 66 + forceSpread * 48 + richness * 70;
+        const pulse = 0.76 + sharedLfo * 0.24;
 
         setParam(this.master.gain, clamp(masterLevel * pulse, 0.0001, 0.26), now, 0.06);
-        setParam(this.delay.delayTime, 0.06 + (1 - damping) * 0.32 + orbitRatio * 0.18, now, 0.08);
+        setParam(this.delay.delayTime, 0.06 + (1 - damping) * 0.32 + orbitRatio * 0.18 + unipolarLfo * pulseDepth * 0.045, now, 0.08);
         setParam(this.delayFeedback.gain, clamp(0.14 + forceSpread * 0.22 + drive * 0.16 + pulseDepth * 0.12, 0.05, 0.68), now, 0.08);
-        setParam(this.delayWet.gain, clamp(0.04 + spectralBalance * 0.12 + forceSpread * 0.12, 0.02, 0.26), now, 0.06);
-        setParam(this.delayFilter.frequency, 600 + spectralBalance * 4200 + damping * 900, now, 0.06);
-        setParam(this.noiseFilter.frequency, 450 + tension * 4200 + foldOffset * 1100, now, 0.05);
+        setParam(this.delayWet.gain, clamp(0.04 + spectralBalance * 0.1 + forceSpread * 0.1 + richness * 0.045, 0.02, 0.27), now, 0.06);
+        setParam(this.delayFilter.frequency, 600 + spectralBalance * 3900 + damping * 900 + unipolarLfo * pulseDepth * 1300, now, 0.06);
+        setParam(this.noiseFilter.frequency, 450 + tension * 3900 + foldOffset * 1000 + richness * 1400, now, 0.05);
         setParam(this.noiseFilter.Q, 1.5 + cohesion * 10 + forceSpread * 5, now, 0.05);
-        setParam(this.noiseGain.gain, clamp(0.008 + particleDensity * 0.035 + pressure * 0.022, 0.0001, 0.08), now, 0.05);
+        setParam(this.noiseGain.gain, clamp(0.006 + richness * 0.026 + pressure * 0.018, 0.0001, 0.064), now, 0.05);
 
-        const nextSaturatorAmount = 1 + drive * 2.6 + pressure * 1.4;
+        const nextSaturatorAmount = 1 + drive * 2.2 + pressure * 1.1 + richness * 0.55;
         if (this.saturatorAmount === null || Math.abs(nextSaturatorAmount - this.saturatorAmount) > 0.08) {
             this.shaper.curve = makeSaturator(nextSaturatorAmount);
             this.saturatorAmount = nextSaturatorAmount;
@@ -270,19 +302,41 @@ class CellFlowAudioEngine {
         this.voices.forEach((voice, index) => {
             const isActive = index < activeVoices;
             const ratioSpread = 0.76 + orbitRatio * 0.62;
-            const frequency = baseFrequency * VOICE_RATIOS[index] * (1 + tension * 0.08 * index) * ratioSpread;
-            const voiceGain = isActive ? (0.28 / activeVoices) * (0.55 + cohesion * 0.45) : 0.0001;
+            const lfoBend = 1 + sharedLfo * (0.006 + index * 0.003);
+            const frequency = baseFrequency * VOICE_RATIOS[index] * (1 + tension * 0.08 * index) * ratioSpread * lfoBend;
+            const voiceGain = isActive ? (0.24 / activeVoices) * (0.58 + cohesion * 0.38 + richness * 0.12) : 0.0001;
+            const partialGain = isActive ? (0.005 + richness * 0.036) * (1 + index * 0.08) * (0.72 + unipolarLfo * pulseDepth * 0.45) : 0.0001;
+            const partialFrequency = frequency * (2 + index * 0.35 + spectralBalance * 1.1 + richness * 0.9);
             const pan = activeVoices === 1 ? 0 : (index / (activeVoices - 1)) * 1.7 - 0.85;
 
             setParam(voice.carrier.frequency, clamp(frequency, 22, 1200), now, 0.06);
-            setParam(voice.modulator.frequency, clamp(frequency * (0.33 + foldOffset * 1.8 + index * 0.08), 0.4, 2400), now, 0.06);
-            setParam(voice.modGain.gain, clamp(fmDepth * (0.65 + index * 0.08), 0, 260), now, 0.05);
+            setParam(voice.modulator.frequency, clamp(frequency * (0.33 + foldOffset * 1.8 + index * 0.08 + unipolarLfo * pulseDepth * 0.28), 0.4, 2400), now, 0.06);
+            setParam(voice.modGain.gain, clamp(fmDepth * (0.62 + index * 0.07 + unipolarLfo * pulseDepth * 0.22), 0, 260), now, 0.05);
+            setParam(voice.partial.frequency, clamp(partialFrequency, 48, 5200), now, 0.06);
+            setParam(voice.partialFilter.frequency, clamp(partialFrequency * (1.1 + tension * 0.3), 90, 9000), now, 0.05);
+            setParam(voice.partialFilter.Q, clamp(1.2 + spectralBalance * 6 + richness * 2.5, 0.4, 12), now, 0.05);
+            setParam(voice.partialGain.gain, clamp(partialGain, 0.0001, 0.055), now, 0.07);
             setParam(voice.filter.frequency, clamp(filterBase * (0.65 + index * 0.18), 80, 9000), now, 0.05);
             setParam(voice.filter.Q, clamp(q, 0.2, 18), now, 0.05);
-            setParam(voice.panner.pan, clamp(pan + (orbitRatio - 0.5) * 0.35, -1, 1), now, 0.08);
+            setParam(voice.panner.pan, clamp(pan + (orbitRatio - 0.5) * 0.35 + sharedLfo * 0.18, -1, 1), now, 0.08);
             setParam(voice.gain.gain, voiceGain, now, 0.08);
-            setParam(voice.delaySend.gain, clamp(0.035 + forceSpread * 0.16 + pulseDepth * 0.12, 0.02, 0.25), now, 0.06);
+            setParam(voice.delaySend.gain, clamp(0.035 + forceSpread * 0.13 + pulseDepth * 0.1 + richness * 0.055, 0.02, 0.25), now, 0.06);
         });
+    }
+
+    getSharedLfo(params = {}) {
+        const depth = params.lfoA ?? 0;
+        const rate = params.lfoS ?? 0.1;
+        const time = performance.now() / 1000;
+        return depth * Math.sin(2 * Math.PI * rate * time);
+    }
+
+    startControlLoop() {
+        clearInterval(this.controlTimer);
+        this.controlTimer = window.setInterval(() => {
+            if (!this.started || !this.latestParams) return;
+            this.update(this.latestParams);
+        }, CONTROL_UPDATE_MS);
     }
 
     triggerRegenerate() {
@@ -308,11 +362,13 @@ class CellFlowAudioEngine {
 
             const density = norm(this.latestParams.PARTICLE_COUNT ?? 4000, 500, 10000);
             const flowRate = norm(this.latestParams.delta_t ?? 0.22, 0.01, 0.35);
+            const lfoDepth = Math.abs(this.latestParams.lfoA ?? 0);
             const now = this.context.currentTime;
-            const interval = 0.18 - density * 0.1 - flowRate * 0.04;
+            const richness = Math.pow(density, 0.72);
+            const interval = 0.2 - richness * 0.12 - flowRate * 0.04 - lfoDepth * 0.018;
 
             if (now - this.lastGrainTime >= interval) {
-                this.spawnGrainBurst(1 + Math.round(density * 3), 0.045 + flowRate * 0.06);
+                this.spawnGrainBurst(1 + Math.round(richness * 5), 0.032 + flowRate * 0.055 + richness * 0.014);
                 this.lastGrainTime = now;
             }
         }, 45);
@@ -324,6 +380,9 @@ class CellFlowAudioEngine {
         const tension = norm(params.k ?? 16.57, 1.5, 30);
         const spectralBalance = norm(params.balance ?? 0.79, 0.01, 1.5);
         const pressure = norm(params.repulsion ?? 50, 2, 200);
+        const density = norm(params.PARTICLE_COUNT ?? 4000, 500, 10000);
+        const lfoValue = this.getSharedLfo(params);
+        const richness = Math.pow(density, 0.72);
 
         for (let i = 0; i < count; i++) {
             const burst = ctx.createBufferSource();
@@ -343,10 +402,10 @@ class CellFlowAudioEngine {
 
             burst.buffer = buffer;
             filter.type = 'bandpass';
-            filter.frequency.setValueAtTime(500 + tension * 5200 + Math.random() * 1200, start);
-            filter.Q.setValueAtTime(1.5 + spectralBalance * 8, start);
+            filter.frequency.setValueAtTime(clamp(420 + tension * 4700 + richness * 2600 + lfoValue * 700 + Math.random() * 1300, 80, 9500), start);
+            filter.Q.setValueAtTime(1.4 + spectralBalance * 7 + richness * 2.5, start);
             gain.gain.setValueAtTime(0.0001, start);
-            gain.gain.exponentialRampToValueAtTime(0.025 + pressure * 0.025, start + 0.006);
+            gain.gain.exponentialRampToValueAtTime(0.012 + pressure * 0.018 + richness * 0.018, start + 0.006);
             gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
             pan.pan.setValueAtTime(Math.random() * 2 - 1, start);
 
