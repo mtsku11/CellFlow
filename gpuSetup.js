@@ -548,13 +548,13 @@ export function createPipelines() {
                 {
                     format: format,
                     blend: {
-                        color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+                        color: { srcFactor: 'src-alpha', dstFactor: 'one', operation: 'add' },
                         alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
                     },
                 },
             ],
         },
-        primitive: { topology: 'point-list' },
+        primitive: { topology: 'triangle-list' },
     });
     renderBindGroup = device.createBindGroup({
         layout: renderPipeline.getBindGroupLayout(0),
@@ -597,7 +597,7 @@ export function renderSimulationFrame() {
     });
     renderPass.setPipeline(renderPipeline);
     renderPass.setBindGroup(0, renderBindGroup);
-    renderPass.draw(PARTICLE_COUNT * 4);
+    renderPass.draw(PARTICLE_COUNT * 6);
     renderPass.end();
     device.queue.submit([encoder.finish()]);
 }

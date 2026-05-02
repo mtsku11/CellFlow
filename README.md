@@ -79,7 +79,7 @@ The main files are:
 - `main.js`: simulation loop, UI wiring, recording, and organism analysis updates
 - `audioEngine.js`: Web Audio synthesis and organism-to-sound mapping
 - `gpuSetup.js`: WebGPU setup and particle simulation support
-- `simShader.js`, `renderShader.js`, `glowShader.js`: visual shaders
+- `simShader.js`, `renderShader.js`: simulation and luminous particle shaders
 - `presets/`: saved parameter states
 
 ## Credits
