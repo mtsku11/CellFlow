@@ -113,15 +113,24 @@ function generateColors(n) {
     return colors;
 }
 
-function classifyOrganism(massRatio) {
-    if (massRatio >= 0.08) return 'large';
+function classifyOrganism(massRatio, metrics = {}) {
+    const canBeLarge = metrics.coreMassRatio >= 0.045
+        && metrics.coreFillRatio >= 0.36
+        && metrics.peakDensityRatio >= 3.9
+        && metrics.coreDensityRatio >= 2.7
+        && metrics.boundaryContrast >= 1.8
+        && metrics.boundaryDenseRatio <= 0.34
+        && metrics.radiusNorm >= 0.09;
+
+    if (massRatio >= 0.08 && canBeLarge) return 'large';
     if (massRatio >= 0.026) return 'medium';
     return 'small';
 }
 
 function buildOrganismAnalysis(particleData) {
-    const cols = Math.round(constrain(canvasWidth / Math.max(26, radius * 0.72), 18, 48));
-    const rows = Math.round(constrain(canvasHeight / Math.max(26, radius * 0.72), 12, 36));
+    const analysisCellSize = constrain(Math.max(20, radius * 0.34), 20, 34);
+    const cols = Math.round(constrain(canvasWidth / analysisCellSize, 28, 76));
+    const rows = Math.round(constrain(canvasHeight / analysisCellSize, 18, 48));
     const cellWidth = canvasWidth / cols;
     const cellHeight = canvasHeight / rows;
     const cells = Array.from({ length: cols * rows }, () => ({
@@ -160,8 +169,18 @@ function buildOrganismAnalysis(particleData) {
     }
 
     const averageOccupancy = PARTICLE_COUNT / cells.length;
-    const denseThreshold = Math.max(4, Math.round(averageOccupancy * 2.2));
+    const occupancyVariance = cells.reduce((sum, cell) => sum + (cell.count - averageOccupancy) ** 2, 0) / cells.length;
+    const occupancyDeviation = Math.sqrt(occupancyVariance);
+    const denseThreshold = Math.max(4, Math.round(Math.max(
+        averageOccupancy * 2.15,
+        averageOccupancy + occupancyDeviation * 2.35
+    )));
+    const coreThreshold = Math.max(denseThreshold + 2, Math.round(Math.max(
+        averageOccupancy * 3.2,
+        averageOccupancy + occupancyDeviation * 3.4
+    )));
     const visited = new Uint8Array(cells.length);
+    const denseVisited = new Uint8Array(cells.length);
     const organisms = [];
     const neighbors = [
         [-1, -1], [0, -1], [1, -1],
@@ -170,10 +189,47 @@ function buildOrganismAnalysis(particleData) {
     ];
 
     for (let index = 0; index < cells.length; index++) {
-        if (visited[index] || cells[index].count < denseThreshold) continue;
+        if (visited[index] || denseVisited[index] || cells[index].count < coreThreshold) continue;
 
-        const queue = [index];
+        const coreQueue = [index];
         visited[index] = 1;
+        let coreMass = 0;
+        let peakCellCount = 0;
+        let minCoreCol = cols;
+        let maxCoreCol = 0;
+        let minCoreRow = rows;
+        let maxCoreRow = 0;
+
+        for (let cursor = 0; cursor < coreQueue.length; cursor++) {
+            const current = coreQueue[cursor];
+            const cell = cells[current];
+            const col = current % cols;
+            const row = Math.floor(current / cols);
+
+            coreMass += cell.count;
+            peakCellCount = Math.max(peakCellCount, cell.count);
+            minCoreCol = Math.min(minCoreCol, col);
+            maxCoreCol = Math.max(maxCoreCol, col);
+            minCoreRow = Math.min(minCoreRow, row);
+            maxCoreRow = Math.max(maxCoreRow, row);
+
+            neighbors.forEach(([dx, dy]) => {
+                const nextCol = col + dx;
+                const nextRow = row + dy;
+                if (nextCol < 0 || nextCol >= cols || nextRow < 0 || nextRow >= rows) return;
+                const next = nextRow * cols + nextCol;
+                if (visited[next] || cells[next].count < coreThreshold) return;
+                visited[next] = 1;
+                coreQueue.push(next);
+            });
+        }
+
+        if (coreMass < Math.max(24, averageOccupancy * 4.2) || coreMass / PARTICLE_COUNT < 0.006) continue;
+
+        const queue = [...coreQueue];
+        queue.forEach((cellIndex) => {
+            denseVisited[cellIndex] = 1;
+        });
         let mass = 0;
         let weightedX = 0;
         let weightedY = 0;
@@ -207,8 +263,8 @@ function buildOrganismAnalysis(particleData) {
                 const nextRow = row + dy;
                 if (nextCol < 0 || nextCol >= cols || nextRow < 0 || nextRow >= rows) return;
                 const next = nextRow * cols + nextCol;
-                if (visited[next] || cells[next].count < denseThreshold) return;
-                visited[next] = 1;
+                if (denseVisited[next] || cells[next].count < denseThreshold) return;
+                denseVisited[next] = 1;
                 queue.push(next);
             });
         }
@@ -224,22 +280,66 @@ function buildOrganismAnalysis(particleData) {
         const clusterDensity = mass / clusterCells;
         if (clusterDensity < averageOccupancy * 1.6) continue;
 
+        let boundaryMass = 0;
+        let boundaryCells = 0;
+        let denseBoundaryCells = 0;
+        for (let row = Math.max(0, minRow - 1); row <= Math.min(rows - 1, maxRow + 1); row++) {
+            for (let col = Math.max(0, minCol - 1); col <= Math.min(cols - 1, maxCol + 1); col++) {
+                const cellIndex = row * cols + col;
+                if (denseVisited[cellIndex]) continue;
+                let touchesBody = false;
+                neighbors.forEach(([dx, dy]) => {
+                    const nextCol = col + dx;
+                    const nextRow = row + dy;
+                    if (nextCol < 0 || nextCol >= cols || nextRow < 0 || nextRow >= rows) return;
+                    if (denseVisited[nextRow * cols + nextCol]) touchesBody = true;
+                });
+                if (!touchesBody) continue;
+                boundaryCells++;
+                boundaryMass += cells[cellIndex].count;
+                if (cells[cellIndex].count >= denseThreshold * 0.7) denseBoundaryCells++;
+            }
+        }
+
+        const coreCells = coreQueue.length;
+        const coreBoundingBoxCells = (maxCoreCol - minCoreCol + 1) * (maxCoreRow - minCoreRow + 1);
+        const coreDensity = coreMass / coreCells;
+        const boundaryDensity = boundaryCells ? boundaryMass / boundaryCells : 0;
         const avgSpeed = speedSum / mass;
         const spanX = (maxCol - minCol + 1) * cellWidth;
         const spanY = (maxRow - minRow + 1) * cellHeight;
         const organismRadius = Math.max(spanX, spanY) * 0.5;
+        const radiusNorm = constrain(organismRadius / Math.max(canvasWidth, canvasHeight), 0, 1);
+        const metrics = {
+            coreMassRatio: coreMass / PARTICLE_COUNT,
+            coreFillRatio: coreCells / coreBoundingBoxCells,
+            peakDensityRatio: peakCellCount / averageOccupancy,
+            coreDensityRatio: coreDensity / averageOccupancy,
+            boundaryContrast: boundaryDensity > 0 ? coreDensity / boundaryDensity : coreDensity,
+            boundaryDenseRatio: boundaryCells ? denseBoundaryCells / boundaryCells : 0,
+            radiusNorm,
+            fillRatio,
+            clusterDensityRatio: clusterDensity / averageOccupancy
+        };
+        const sizeClass = classifyOrganism(massRatio, metrics);
 
         organisms.push({
-            id: `${minCol}:${minRow}:${maxCol}:${maxRow}:${classifyOrganism(massRatio)}`,
-            sizeClass: classifyOrganism(massRatio),
+            id: `${minCol}:${minRow}:${maxCol}:${maxRow}:${sizeClass}`,
+            sizeClass,
             mass,
             massRatio,
+            coreMass,
+            coreMassRatio: metrics.coreMassRatio,
+            densityRatio: metrics.clusterDensityRatio,
+            coreDensityRatio: metrics.coreDensityRatio,
+            boundaryContrast: metrics.boundaryContrast,
+            boundaryDenseRatio: metrics.boundaryDenseRatio,
             x: weightedX / mass,
             y: weightedY / mass,
             xNorm: constrain((weightedX / mass) / canvasWidth, 0, 1),
             yNorm: constrain((weightedY / mass) / canvasHeight, 0, 1),
             radius: organismRadius,
-            radiusNorm: constrain(organismRadius / Math.max(canvasWidth, canvasHeight), 0, 1),
+            radiusNorm,
             speed: avgSpeed,
             speedNorm: constrain(avgSpeed / Math.max(1.5, radius * 0.16), 0, 1),
             vx: weightedVx / mass,
@@ -249,12 +349,17 @@ function buildOrganismAnalysis(particleData) {
 
     organisms.sort((a, b) => b.mass - a.mass);
     const organismMass = organisms.reduce((sum, organism) => sum + organism.mass, 0);
+    const classMassRatio = organisms.reduce((groups, organism) => {
+        groups[organism.sizeClass] += organism.massRatio;
+        return groups;
+    }, { large: 0, medium: 0, small: 0 });
 
     return {
         timestamp: performance.now(),
         particleCount: PARTICLE_COUNT,
         grid: { cols, rows },
         organisms: organisms.slice(0, 14),
+        classMassRatio,
         organismMassRatio: constrain(organismMass / PARTICLE_COUNT, 0, 1),
         cloudRatio: constrain(1 - organismMass / PARTICLE_COUNT, 0, 1),
         averageSpeed: totalSpeed / PARTICLE_COUNT,
