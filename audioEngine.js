@@ -319,7 +319,7 @@ class CellFlowAudioEngine {
             const ratioSpread = 0.76 + orbitRatio * 0.62;
             const lfoBend = 1 + sharedLfo * (0.006 + index * 0.003);
             const frequency = baseFrequency * VOICE_RATIOS[index] * (1 + tension * 0.08 * index) * ratioSpread * lfoBend;
-            const voiceGain = isActive ? (0.045 / activeVoices) * (0.035 + cohesion * 0.11 * organismPresence + organismPresence * 0.78 + largePresence * 0.28 + motionRatio * 0.24) : 0.0001;
+            const voiceGain = isActive ? (0.045 / activeVoices) * (0.52 + cohesion * 0.11 * organismPresence + organismPresence * 0.42 + largePresence * 0.28 + motionRatio * 0.24) : 0.0001;
             const partialGain = isActive ? (0.002 + richness * 0.012) * organismPresence * (1 + index * 0.08) * (0.7 + unipolarLfo * pulseDepth * 0.45) : 0.0001;
             const partialFrequency = frequency * (2 + index * 0.35 + spectralBalance * 1.1 + richness * 0.9);
             const pan = activeVoices === 1 ? 0 : (index / (activeVoices - 1)) * 1.7 - 0.85;
