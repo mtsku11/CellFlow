@@ -160,7 +160,7 @@ function buildOrganismAnalysis(particleData) {
     }
 
     const averageOccupancy = PARTICLE_COUNT / cells.length;
-    const denseThreshold = Math.max(3, Math.round(averageOccupancy * 1.45));
+    const denseThreshold = Math.max(4, Math.round(averageOccupancy * 2.2));
     const visited = new Uint8Array(cells.length);
     const organisms = [];
     const neighbors = [
@@ -214,7 +214,15 @@ function buildOrganismAnalysis(particleData) {
         }
 
         const massRatio = mass / PARTICLE_COUNT;
-        if (mass < Math.max(14, averageOccupancy * 2.2) || massRatio < 0.004) continue;
+        if (mass < Math.max(18, averageOccupancy * 3.5) || massRatio < 0.008) continue;
+
+        const clusterCells = queue.length;
+        const boundingBoxCells = (maxCol - minCol + 1) * (maxRow - minRow + 1);
+        const fillRatio = clusterCells / boundingBoxCells;
+        if (fillRatio < 0.25) continue;
+
+        const clusterDensity = mass / clusterCells;
+        if (clusterDensity < averageOccupancy * 1.6) continue;
 
         const avgSpeed = speedSum / mass;
         const spanX = (maxCol - minCol + 1) * cellWidth;
