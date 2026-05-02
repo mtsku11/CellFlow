@@ -113,6 +113,147 @@ function generateColors(n) {
     return colors;
 }
 
+function classifyOrganism(massRatio) {
+    if (massRatio >= 0.08) return 'large';
+    if (massRatio >= 0.026) return 'medium';
+    return 'small';
+}
+
+function buildOrganismAnalysis(particleData) {
+    const cols = Math.round(constrain(canvasWidth / Math.max(26, radius * 0.72), 18, 48));
+    const rows = Math.round(constrain(canvasHeight / Math.max(26, radius * 0.72), 12, 36));
+    const cellWidth = canvasWidth / cols;
+    const cellHeight = canvasHeight / rows;
+    const cells = Array.from({ length: cols * rows }, () => ({
+        count: 0,
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
+        speed: 0
+    }));
+
+    let totalSpeed = 0;
+    let movingParticles = 0;
+
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+        const base = i * 8;
+        const x = particleData[base];
+        const y = particleData[base + 1];
+        const vx = particleData[base + 2];
+        const vy = particleData[base + 3];
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+
+        const col = Math.floor(constrain(x, 0, canvasWidth - 1) / cellWidth);
+        const row = Math.floor(constrain(y, 0, canvasHeight - 1) / cellHeight);
+        const cell = cells[row * cols + col];
+        const speed = Math.hypot(vx || 0, vy || 0);
+
+        cell.count++;
+        cell.x += x;
+        cell.y += y;
+        cell.vx += vx || 0;
+        cell.vy += vy || 0;
+        cell.speed += speed;
+        totalSpeed += speed;
+        if (speed > 0.35) movingParticles++;
+    }
+
+    const averageOccupancy = PARTICLE_COUNT / cells.length;
+    const denseThreshold = Math.max(3, Math.round(averageOccupancy * 1.45));
+    const visited = new Uint8Array(cells.length);
+    const organisms = [];
+    const neighbors = [
+        [-1, -1], [0, -1], [1, -1],
+        [-1, 0], [1, 0],
+        [-1, 1], [0, 1], [1, 1]
+    ];
+
+    for (let index = 0; index < cells.length; index++) {
+        if (visited[index] || cells[index].count < denseThreshold) continue;
+
+        const queue = [index];
+        visited[index] = 1;
+        let mass = 0;
+        let weightedX = 0;
+        let weightedY = 0;
+        let weightedVx = 0;
+        let weightedVy = 0;
+        let speedSum = 0;
+        let minCol = cols;
+        let maxCol = 0;
+        let minRow = rows;
+        let maxRow = 0;
+
+        for (let cursor = 0; cursor < queue.length; cursor++) {
+            const current = queue[cursor];
+            const cell = cells[current];
+            const col = current % cols;
+            const row = Math.floor(current / cols);
+
+            mass += cell.count;
+            weightedX += cell.x;
+            weightedY += cell.y;
+            weightedVx += cell.vx;
+            weightedVy += cell.vy;
+            speedSum += cell.speed;
+            minCol = Math.min(minCol, col);
+            maxCol = Math.max(maxCol, col);
+            minRow = Math.min(minRow, row);
+            maxRow = Math.max(maxRow, row);
+
+            neighbors.forEach(([dx, dy]) => {
+                const nextCol = col + dx;
+                const nextRow = row + dy;
+                if (nextCol < 0 || nextCol >= cols || nextRow < 0 || nextRow >= rows) return;
+                const next = nextRow * cols + nextCol;
+                if (visited[next] || cells[next].count < denseThreshold) return;
+                visited[next] = 1;
+                queue.push(next);
+            });
+        }
+
+        const massRatio = mass / PARTICLE_COUNT;
+        if (mass < Math.max(14, averageOccupancy * 2.2) || massRatio < 0.004) continue;
+
+        const avgSpeed = speedSum / mass;
+        const spanX = (maxCol - minCol + 1) * cellWidth;
+        const spanY = (maxRow - minRow + 1) * cellHeight;
+        const organismRadius = Math.max(spanX, spanY) * 0.5;
+
+        organisms.push({
+            id: `${minCol}:${minRow}:${maxCol}:${maxRow}:${classifyOrganism(massRatio)}`,
+            sizeClass: classifyOrganism(massRatio),
+            mass,
+            massRatio,
+            x: weightedX / mass,
+            y: weightedY / mass,
+            xNorm: constrain((weightedX / mass) / canvasWidth, 0, 1),
+            yNorm: constrain((weightedY / mass) / canvasHeight, 0, 1),
+            radius: organismRadius,
+            radiusNorm: constrain(organismRadius / Math.max(canvasWidth, canvasHeight), 0, 1),
+            speed: avgSpeed,
+            speedNorm: constrain(avgSpeed / Math.max(1.5, radius * 0.16), 0, 1),
+            vx: weightedVx / mass,
+            vy: weightedVy / mass
+        });
+    }
+
+    organisms.sort((a, b) => b.mass - a.mass);
+    const organismMass = organisms.reduce((sum, organism) => sum + organism.mass, 0);
+
+    return {
+        timestamp: performance.now(),
+        particleCount: PARTICLE_COUNT,
+        grid: { cols, rows },
+        organisms: organisms.slice(0, 14),
+        organismMassRatio: constrain(organismMass / PARTICLE_COUNT, 0, 1),
+        cloudRatio: constrain(1 - organismMass / PARTICLE_COUNT, 0, 1),
+        averageSpeed: totalSpeed / PARTICLE_COUNT,
+        motionRatio: movingParticles / PARTICLE_COUNT
+    };
+}
+
 // --- Inicialización y configuración de WebGPU ---
 export async function setupWebGPU(canvasId) {
     adapter = await navigator.gpu.requestAdapter();
@@ -346,6 +487,38 @@ export function renderSimulationFrame() {
     renderPass.draw(PARTICLE_COUNT * 4);
     renderPass.end();
     device.queue.submit([encoder.finish()]);
+}
+
+export async function analyzeOrganisms() {
+    if (!device || !particleBuffer) return null;
+
+    const readBuffer = device.createBuffer({
+        size: PARTICLE_COUNT * particleStructSize,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+    });
+
+    try {
+        const encoder = device.createCommandEncoder();
+        encoder.copyBufferToBuffer(
+            particleBuffer,
+            0,
+            readBuffer,
+            0,
+            PARTICLE_COUNT * particleStructSize
+        );
+        device.queue.submit([encoder.finish()]);
+
+        await readBuffer.mapAsync(GPUMapMode.READ);
+        const mapped = readBuffer.getMappedRange();
+        const analysis = buildOrganismAnalysis(new Float32Array(mapped));
+        readBuffer.unmap();
+        readBuffer.destroy();
+        return analysis;
+    } catch (error) {
+        console.warn('Organism analysis failed:', error);
+        readBuffer.destroy();
+        return null;
+    }
 }
 
 // --- Setter functions for external modification ---

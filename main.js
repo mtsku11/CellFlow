@@ -1,6 +1,6 @@
 // main.js
-import * as GPU from './gpuSetup.js?v=av2';
-import { audioEngine } from './audioEngine.js?v=av2';
+import * as GPU from './gpuSetup.js?v=av3';
+import { audioEngine } from './audioEngine.js?v=av3';
 
 const canvas = document.getElementById('canvas');
 const numParticlesSlider = document.getElementById('num-particles-slider');
@@ -65,6 +65,9 @@ let simulationFrameCount = 0;
 let lastCaptureTime = 0;
 const desiredCaptureInterval = 1000 / 60; // 60 frames per second
 let soundEnabled = false;
+let organismAnalysisPending = false;
+let lastOrganismAnalysisTime = 0;
+const organismAnalysisInterval = 360;
 
 document.addEventListener('DOMContentLoaded', async () => {
     await GPU.setupWebGPU('canvas');
@@ -460,6 +463,7 @@ function addEventListeners() {
 function frame(currentTime) {
     GPU.updateSimParamsBuffer();
     GPU.renderSimulationFrame();
+    updateOrganismAudio(currentTime);
 
     if (isRecording) {
         if (!lastCaptureTime) {
@@ -474,6 +478,24 @@ function frame(currentTime) {
     }
 
     requestAnimationFrame(frame);
+}
+
+function updateOrganismAudio(currentTime) {
+    if (!soundEnabled || organismAnalysisPending) return;
+    if (currentTime - lastOrganismAnalysisTime < organismAnalysisInterval) return;
+
+    organismAnalysisPending = true;
+    lastOrganismAnalysisTime = currentTime;
+    GPU.analyzeOrganisms()
+        .then((analysis) => {
+            if (analysis) audioEngine.updateOrganisms(analysis);
+        })
+        .catch((error) => {
+            console.warn('Could not update organism audio analysis:', error);
+        })
+        .finally(() => {
+            organismAnalysisPending = false;
+        });
 }
 
 function getCurrentAudioVisualParams() {
