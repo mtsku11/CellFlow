@@ -39,7 +39,7 @@ ${colorAssignments}
       else { local = vec2f(1.0, 1.0); }
 
       let shortestSide = min(${canvasWidth}.0, ${canvasHeight}.0);
-      let glowRadius = clamp(shortestSide * 0.0075, 4.5, 9.0);
+      let glowRadius = clamp(shortestSide * 0.011, 7.0, 15.0);
       let pixelPos = p.pos + local * glowRadius;
 
       // Validar límites para evitar dibujar fuera del canvas
@@ -64,13 +64,14 @@ ${colorAssignments}
         discard;
       }
 
-      let core = smoothstep(0.24, 0.0, d);
-      let halo = pow(max(1.0 - d, 0.0), 2.8);
-      let aura = pow(max(1.0 - d * 0.72, 0.0), 5.0) * 0.22;
-      let intensity = core * 1.25 + halo * 0.42 + aura;
-      let color = in.color * (0.55 + core * 0.8 + halo * 0.45);
+      let core = smoothstep(0.22, 0.0, d);
+      let halo = pow(max(1.0 - d, 0.0), 1.9);
+      let aura = pow(max(1.0 - d * 0.82, 0.0), 2.7) * 0.34;
+      let outerGlow = pow(max(1.0 - d * 0.55, 0.0), 7.0) * 0.2;
+      let intensity = core * 1.55 + halo * 0.68 + aura + outerGlow;
+      let color = in.color * (0.68 + core * 0.95 + halo * 0.6 + aura * 0.35);
 
-      return vec4f(color * intensity, min(core * 0.95 + halo * 0.32 + aura, 0.86));
+      return vec4f(color * intensity, min(core * 0.98 + halo * 0.48 + aura + outerGlow, 0.94));
     }
   `;
 }
