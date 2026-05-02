@@ -1,5 +1,6 @@
 // main.js
 import * as GPU from './gpuSetup.js';
+import { audioEngine } from './audioEngine.js';
 
 const canvas = document.getElementById('canvas');
 const numParticlesSlider = document.getElementById('num-particles-slider');
@@ -49,6 +50,8 @@ export let wrappingMovement = 10;
 const startBtn = document.getElementById('start-recording');
 const stopBtn = document.getElementById('stop-recording');
 const downloadBtn = document.getElementById('download-video');
+const soundToggleButton = document.getElementById('sound-toggle');
+const soundStatus = document.getElementById('sound-status');
 
 const saveParamsButton = document.getElementById('save-params-button');
 const loadParamsButton = document.getElementById('load-params-button');
@@ -61,6 +64,7 @@ let isRecording = false;
 let simulationFrameCount = 0;
 let lastCaptureTime = 0;
 const desiredCaptureInterval = 1000 / 60; // 60 frames per second
+let soundEnabled = false;
 
 document.addEventListener('DOMContentLoaded', async () => {
     await GPU.setupWebGPU('canvas');
@@ -75,6 +79,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     initializeUIValues();
     addEventListeners();
+    syncAudioEngine();
     setRecordingUI('stopped');
     requestAnimationFrame(frame);
 
@@ -207,6 +212,7 @@ function applyParams(params) {
     }
     GPU.createPipelines();
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
 }
 
 
@@ -252,6 +258,7 @@ function addEventListeners() {
     GPU.initializeParticles();
     GPU.createPipelines();
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
     canvas.focus();
 });
     numTypesSlider.addEventListener('input', (event) => {
@@ -263,6 +270,7 @@ function addEventListeners() {
     GPU.initializeParticles();
     GPU.createPipelines();
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
     canvas.focus();
 });
 
@@ -270,6 +278,7 @@ function addEventListeners() {
     GPU.setRadius(parseFloat(event.target.value));
     radiusValueSpan.textContent = GPU.radius.toFixed(1);
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
     canvas.focus();
 });
 
@@ -277,6 +286,7 @@ function addEventListeners() {
     GPU.setDeltaT(parseFloat(event.target.value));
     deltaTValueSpan.textContent = GPU.delta_t.toFixed(2);
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
     canvas.focus();
 });
 
@@ -284,6 +294,7 @@ function addEventListeners() {
     GPU.setFriction(parseFloat(event.target.value));
     frictionValueSpan.textContent = GPU.friction.toFixed(2);
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
     canvas.focus();
 });
 
@@ -291,6 +302,7 @@ function addEventListeners() {
     GPU.setRepulsion(parseFloat(event.target.value));
     repulsionValueSpan.textContent = GPU.repulsion.toFixed(2);
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
     canvas.focus();
 });
 
@@ -298,6 +310,7 @@ function addEventListeners() {
     GPU.setAttraction(parseFloat(event.target.value));
     attractionValueSpan.textContent = GPU.attraction.toFixed(2);
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
     canvas.focus();
 });
 
@@ -305,6 +318,7 @@ function addEventListeners() {
     GPU.setK(parseFloat(event.target.value));
     kValueSpan.textContent = GPU.k.toFixed(2);
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
     canvas.focus();
 });
 
@@ -313,6 +327,7 @@ function addEventListeners() {
     forceRangeValueSpan.textContent = GPU.forceRange.toFixed(2);
     GPU.updateForceTable();
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
     canvas.focus();
 });
 
@@ -321,6 +336,7 @@ function addEventListeners() {
     forceBiasValueSpan.textContent = GPU.forceBias.toFixed(2);
     GPU.updateForceTable();
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
     canvas.focus();
 });
 
@@ -328,18 +344,21 @@ function addEventListeners() {
     GPU.setRatio(parseFloat(event.target.value));
     ratioValueSpan.textContent = GPU.ratio.toFixed(2);
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
     canvas.focus();
 });
 
     lfoASlider.addEventListener('input', (event) => {
     GPU.setLfoA(parseFloat(event.target.value));
     lfoAValueSpan.textContent = GPU.lfoA.toFixed(2);
+    syncAudioEngine();
     canvas.focus();
 });
 
     lfoSSlider.addEventListener('input', (event) => {
     GPU.setLfoS(parseFloat(event.target.value));
     lfoSValueSpan.textContent = GPU.lfoS.toFixed(2);
+    syncAudioEngine();
     canvas.focus();
 });
 
@@ -347,6 +366,7 @@ function addEventListeners() {
     GPU.setForceMultiplier(parseFloat(event.target.value));
     forceMultiplierValueSpan.textContent = GPU.forceMultiplier.toFixed(2);
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
     canvas.focus();
 });
 
@@ -354,6 +374,7 @@ function addEventListeners() {
     GPU.setBalance(parseFloat(event.target.value));
     balanceValueSpan.textContent = GPU.balance.toFixed(3);
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
     canvas.focus();
 });
 
@@ -361,12 +382,14 @@ function addEventListeners() {
     GPU.setForceOffset(parseFloat(event.target.value));
     forceOffsetValueSpan.textContent = GPU.forceOffset.toFixed(2);
     GPU.updateSimParamsBuffer();
+    syncAudioEngine();
     canvas.focus();
 });
 
     regenButton.addEventListener('click', () => {
         GPU.updateForceTable(true);
         GPU.initializeRadioByType();
+        audioEngine.triggerRegenerate();
     });
 
     rexButton.addEventListener('click', () => {
@@ -376,10 +399,12 @@ function addEventListeners() {
             rotatedRadios[i] = GPU.radioByType[(i + 1) % GPU.radioByType.length];
         }
         GPU.setRadioByType(rotatedRadios);
+        audioEngine.triggerRegenerate();
     });
 
     resetButton.addEventListener('click', () => {
         GPU.initializeParticles();
+        audioEngine.triggerReset();
     });
 
     window.addEventListener('resize', () => {
@@ -393,6 +418,7 @@ function addEventListeners() {
     startBtn.addEventListener('click', startRecording);
     stopBtn.addEventListener('click', stopRecording);
     downloadBtn.addEventListener('click', downloadVideo);
+    soundToggleButton.addEventListener('click', toggleSound);
 
     saveParamsButton.addEventListener('click', () => {
         const params = GPU.getCurrentParams();
@@ -450,6 +476,37 @@ function frame(currentTime) {
     requestAnimationFrame(frame);
 }
 
+function getCurrentAudioVisualParams() {
+    return GPU.getCurrentParams();
+}
+
+function syncAudioEngine() {
+    audioEngine.update(getCurrentAudioVisualParams());
+}
+
+async function toggleSound() {
+    soundToggleButton.disabled = true;
+    try {
+        if (!soundEnabled) {
+            await audioEngine.start(getCurrentAudioVisualParams());
+            soundEnabled = true;
+            soundToggleButton.textContent = 'Stop sound';
+            soundStatus.textContent = 'live';
+        } else {
+            audioEngine.stop();
+            soundEnabled = false;
+            soundToggleButton.textContent = 'Start sound';
+            soundStatus.textContent = 'silent';
+        }
+    } catch (error) {
+        console.error('Audio engine error:', error);
+        soundEnabled = false;
+        soundStatus.textContent = 'error';
+    } finally {
+        soundToggleButton.disabled = false;
+    }
+}
+
 function setRecordingUI(state) {
     startBtn.disabled = state === 'recording';
     stopBtn.disabled = state !== 'recording';
@@ -461,6 +518,8 @@ function startRecording() {
     recordedChunks = [];
     lastCaptureTime = 0; // Reset capture time
     const stream = canvas.captureStream(); // No need to specify FPS here
+    const audioStream = audioEngine.getRecordingStream();
+    audioStream?.getAudioTracks().forEach((track) => stream.addTrack(track));
     mediaRecorder = new MediaRecorder(stream, {
         mimeType: 'video/webm; codecs=vp9',
         videoBitsPerSecond: 15000000

@@ -220,7 +220,7 @@ export function initializeParticles() {
         typeCounts[ptype]++;
     }
     
-    console.log("Distribución de ptype:", typeCounts);
+    console.debug("Particle type distribution:", typeCounts);
     
     // Actualizar las referencias globales
     particles = newParticles;

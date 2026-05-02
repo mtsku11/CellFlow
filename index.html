@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="mobile-web-app-capable" content="yes">
-    <title>CELL FLOW</title>
+    <title>CELL FLOW AV</title>
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="style.css" />
     <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
   </head>
@@ -11,7 +12,7 @@
     <canvas id="canvas" tabindex="0"></canvas>
     <div class="controls" x-data="{ open: true, sliderSize: 24, sliderTrack: 8 }">
       <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; gap: 8px;">
-  <button @click="open = !open" style="background: #222; color: #fff; border: none; padding: 8px 18px; border-radius: 4px; cursor: pointer; font-size: 1em;">Controls <span x-text="open ? '▲' : '▼'"></span></button>
+  <button @click="open = !open" style="background: #222; color: #fff; border: none; padding: 8px 18px; border-radius: 4px; cursor: pointer; font-size: 1em;">A/V Controls <span x-text="open ? '▲' : '▼'"></span></button>
   <div style="position: relative;">
     <button id="help-btn" style="background:#444; color:#fff; border:none; padding:6px 18px; border-radius:4px; cursor:pointer; font-size:1em;" @mouseenter="document.getElementById('help-tooltip').style.display = 'block'" @mouseleave="document.getElementById('help-tooltip').style.display = 'none'">?</button>
     <div id="help-tooltip" style="display:none; position:absolute; top:110%; left:50%; transform:translateX(-50%); background:rgba(30,30,30,0.98); color:#fff; z-index:100; border-radius:16px; padding:32px 40px; box-shadow:0 2px 16px #000; min-width:320px; max-width:480px; text-align:center; font-size:1.08em;">
@@ -19,7 +20,7 @@
       <ul style="list-style:none; padding:0; margin:0 0 16px 0; text-align:left;">
         <li><b>1-8</b> Load preset 1-8</li>
         <li><b>Space</b> Regenerate force matrix</li>
-        <li><b>X</b> Cycle radious (ratio mus be non zero)</li>
+        <li><b>X</b> Rotate field radii</li>
         <li><b>C</b> Expand/collapse controls menu</li>
       </ul>
       <div style="font-size:0.95em; color:#ccc; text-align:left;">
@@ -32,8 +33,12 @@
   </div>
 </div>
 <div x-show="open" x-transition>
+      <div class="audio-controls">
+        <button id="sound-toggle" type="button">Start sound</button>
+        <span id="sound-status">silent</span>
+      </div>
       <div class="control-group">
-        <label for="num-particles-slider">Particles</label>
+        <label for="num-particles-slider">Cell Density</label>
         <input
           type="range"
           id="num-particles-slider"
@@ -45,7 +50,7 @@
         <span id="num-particles-value" style="display:inline;">4000</span>
       </div>
       <div class="control-group">
-        <label for="num-types-slider">Types</label>
+        <label for="num-types-slider">Voice Colours</label>
         <input
           type="range"
           id="num-types-slider"
@@ -57,7 +62,7 @@
         <span id="num-types-value" style="display:inline;">6</span>
       </div>
       <div class="control-group">
-        <label for="radius-slider">Radius</label>
+        <label for="radius-slider">Field Radius</label>
         <input
           type="range"
           id="radius-slider"
@@ -69,7 +74,7 @@
         <span id="radius-value" style="display:inline;">50.0</span>
       </div>
       <div class="control-group">
-        <label for="delta_t-slider">Time</label>
+        <label for="delta_t-slider">Flow Rate</label>
         <input
           type="range"
           id="delta_t-slider"
@@ -81,7 +86,7 @@
         <span id="delta_t-value" style="display:inline;">0.22</span>
       </div>
       <div class="control-group">
-        <label for="friction-slider">Friction</label>
+        <label for="friction-slider">Damping</label>
         <input
           type="range"
           id="friction-slider"
@@ -93,7 +98,7 @@
         <span id="friction-value" style="display:inline;">0.71</span>
       </div>
       <div class="control-group">
-        <label for="repulsion-slider">Repulsion</label>
+        <label for="repulsion-slider">Scatter Pressure</label>
         <input
            type="range"
            id="repulsion-slider"
@@ -105,7 +110,7 @@
          <span id="repulsion-value" style="display:inline;">50.0</span>
       </div>
       <div class="control-group">
-        <label for="attraction-slider">Attraction</label>
+        <label for="attraction-slider">Cohesion Pull</label>
         <input
            type="range"
            id="attraction-slider"
@@ -117,7 +122,7 @@
          <span id="attraction-value" style="display:inline;">0.62</span>
       </div>
       <div class="control-group">
-        <label for="k-slider">K</label>
+        <label for="k-slider">Membrane Tension</label>
         <input
            type="range"
            id="k-slider"
@@ -130,7 +135,7 @@
          <span id="k-value" style="display:inline;">16.57</span>
       </div>
       <div class="control-group">
-        <label for="force-range-slider">F_Range</label>
+        <label for="force-range-slider">Force Spread</label>
         <input
            type="range"
            id="force-range-slider"
@@ -142,7 +147,7 @@
          <span id="force-range-value" style="display:inline;">0.28</span>
       </div>
       <div class="control-group">
-        <label for="force-bias-slider">F_Bias</label>
+        <label for="force-bias-slider">Force Bias</label>
         <input
            type="range"
            id="force-bias-slider"
@@ -154,7 +159,7 @@
          <span id="force-bias-value" style="display:inline;">-0.20</span>
       </div>
       <div class="control-group">
-        <label for="ratio-slider">Ratio</label>
+        <label for="ratio-slider">Orbit Ratio</label>
         <input
            type="range"
            id="ratio-slider"
@@ -166,7 +171,7 @@
          <span id="ratio-value" style="display:inline;">0.0</span>
       </div>
       <div class="control-group">
-        <label for="lfoa-slider">LFOA</label>
+        <label for="lfoa-slider">Pulse Depth</label>
         <input
            type="range"
            id="lfoa-slider"
@@ -178,7 +183,7 @@
          <span id="lfoa-value" style="display:inline;">0.00</span>
       </div>
       <div class="control-group">
-        <label for="lfos-slider">LFOS</label>
+        <label for="lfos-slider">Pulse Rate</label>
         <input
            type="range"
            id="lfos-slider"
@@ -190,7 +195,7 @@
          <span id="lfos-value" style="display:inline;">0.10</span>
       </div>
       <div class="control-group">
-        <label for="force-multiplier-slider">F_Mult</label>
+        <label for="force-multiplier-slider">Flow Drive</label>
         <input
            type="range"
            id="force-multiplier-slider"
@@ -202,7 +207,7 @@
          <span id="force-multiplier-value" style="display:inline;">2.33</span>
       </div>
       <div class="control-group">
-        <label for="balance-slider">Balance</label>
+        <label for="balance-slider">Spectral Balance</label>
         <input
            type="range"
            id="balance-slider"
@@ -214,7 +219,7 @@
          <span id="balance-value" style="display:inline;">0.79</span>
       </div>
       <div class="control-group">
-        <label for="force-offset-slider">F_Offset</label>
+        <label for="force-offset-slider">Fold Offset</label>
         <input
            type="range"
            id="force-offset-slider"
@@ -226,9 +231,9 @@
          <span id="force-offset-value" style="display:inline;">0.00</span>
       </div>
       <div style="display: flex; gap: 8px;">
-        <button id="regen-button" style="flex: 1;">REGEN</button>
-        <button id="reset-button" style="flex: 1;">RESET</button>
-        <button id="rex-button" style="flex: 1;">reX</button>
+        <button id="regen-button" style="flex: 1;">Re-seed</button>
+        <button id="reset-button" style="flex: 1;">Reset Cells</button>
+        <button id="rex-button" style="flex: 1;">Rotate Fields</button>
       </div>
       <div style="display: flex; gap: 8px; margin-top: 8px;">
         <button id="save-params-button" style="flex: 1;">Save</button>
@@ -263,7 +268,8 @@
           'lfoa',
           'lfos',
           'force-multiplier',
-          'balance'
+          'balance',
+          'force-offset'
         ];
         sliders.forEach(id => {
           const slider = document.getElementById(id + '-slider');

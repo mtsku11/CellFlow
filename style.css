@@ -28,6 +28,7 @@ canvas {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  width: min(430px, calc(100vw - 50px));
 }
 .control-group {
   display: flex;
@@ -35,7 +36,9 @@ canvas {
   gap: 10px;
 }
 .control-group label {
-  width: 70px;
+  width: 132px;
+  font-size: 0.9rem;
+  line-height: 1.1;
 }
 .control-group input[type="range"] {
   flex-grow: 1;
@@ -119,6 +122,24 @@ canvas {
 .control-group span {
   width: 40px;
   text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.audio-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+.audio-controls button {
+  flex: 1;
+  margin-top: 0;
+  padding: 7px 10px;
+}
+.audio-controls span {
+  width: 64px;
+  text-align: right;
+  color: #cfd7de;
+  font-size: 0.88rem;
 }
 button {
   padding: 1px 6px;
