@@ -256,6 +256,39 @@ class CellFlowAudioEngine {
         this.noiseGain.connect(this.master);
         this.noiseGain.connect(this.delay);
         this.noiseSource.start();
+
+        // Drone layer — separate ambient bed driven by cloudRatio
+        this.smoothedCloud = 0;
+        this.droneGain = ctx.createGain();
+        this.droneGain.gain.value = 0.0001;
+        this.droneDelayGain = ctx.createGain();
+        this.droneDelayGain.gain.value = 0.15;
+        this.droneGain.connect(this.master);
+        this.droneGain.connect(this.droneDelayGain);
+        this.droneDelayGain.connect(this.delay);
+
+        this.droneLFO = ctx.createOscillator();
+        this.droneLFOGain = ctx.createGain();
+        this.droneLFO.type = 'sine';
+        this.droneLFO.frequency.value = 0.07;
+        this.droneLFOGain.gain.value = 8;
+        this.droneLFO.connect(this.droneLFOGain);
+        this.droneLFO.start();
+
+        const rootFreq = 55;
+        const centFactor = Math.pow(2, 5 / 1200);
+        this.droneOscs = [1, centFactor, 1 / centFactor].map((detune) => {
+            const osc = ctx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.value = rootFreq * detune;
+            const gain = ctx.createGain();
+            gain.gain.value = 1 / 3;
+            this.droneLFOGain.connect(osc.frequency);
+            osc.connect(gain);
+            gain.connect(this.droneGain);
+            osc.start();
+            return osc;
+        });
     }
 
     update(params = {}) {
@@ -337,6 +370,14 @@ class CellFlowAudioEngine {
             setParam(voice.gain.gain, voiceGain, now, 0.08);
             setParam(voice.delaySend.gain, clamp(0.035 + forceSpread * 0.13 + pulseDepth * 0.1 + richness * 0.055, 0.02, 0.25), now, 0.06);
         });
+
+        // Drone layer: exponential smoothing + long ramp driven by cloudRatio
+        const rawCloud = analysis.cloudRatio ?? 1;
+        this.smoothedCloud += 0.02 * (rawCloud - this.smoothedCloud);
+        const targetDroneGain = clamp(this.smoothedCloud * 0.08, 0.0001, 0.08);
+        this.droneGain.gain.cancelScheduledValues(now);
+        this.droneGain.gain.setValueAtTime(this.droneGain.gain.value, now);
+        this.droneGain.gain.linearRampToValueAtTime(targetDroneGain, now + 3.0);
     }
 
     updateOrganisms(analysis) {
