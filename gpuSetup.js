@@ -43,6 +43,9 @@ let renderBindGroup;
 
 let previousNeighborCountsBufferA;
 let previousNeighborCountsBufferB;
+let neighborReadBuffer;
+let readbackFrameCounter = 0;
+export let avgNeighborDensity = 0;
 let useBufferAasInput = true;
 
 // Almacena los valores brutos y aleatorios que luego se transformarán
@@ -419,6 +422,10 @@ export async function setupWebGPU(canvasId) {
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
     });
     useBufferAasInput = true;
+    neighborReadBuffer = device.createBuffer({
+        size: PARTICLE_COUNT * 4,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
 
     initializeParticles();
     updateForceTable(true);
@@ -626,6 +633,8 @@ export async function analyzeOrganisms() {
         const analysis = buildOrganismAnalysis(new Float32Array(mapped), delta_t);
         readBuffer.unmap();
         readBuffer.destroy();
+        analysis.avgNeighborDensity = avgNeighborDensity;
+        readNeighborDensityAsync(); // fire-and-forget, updates avgNeighborDensity for next frame
         return analysis;
     } catch (error) {
         console.warn('Organism analysis failed:', error);
@@ -676,7 +685,8 @@ export async function setParticleCount(value) {
             particleUints = newParticleUints;
             
             // Recrear los buffers de conteo de vecinos
-            previousNeighborCountsBufferA?.destroy?.();
+            neighborReadBuffer?.destroy?.();
+    previousNeighborCountsBufferA?.destroy?.();
             previousNeighborCountsBufferB?.destroy?.();
             
             previousNeighborCountsBufferA = device.createBuffer({
@@ -699,6 +709,10 @@ export async function setParticleCount(value) {
     }
     // Los buffers de conteo de vecinos ya se recrearon más arriba
     useBufferAasInput = true;
+    neighborReadBuffer = device.createBuffer({
+        size: PARTICLE_COUNT * 4,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
 }
 
 export function setNumParticleTypes(value) {
@@ -903,3 +917,25 @@ async function updateParticleBufferSize() {
     // Recrear los pipelines para asegurar que todo esté sincronizado
     createPipelines();
 }
+
+export async function readNeighborDensityAsync() {
+    readbackFrameCounter++;
+    if (readbackFrameCounter % 30 !== 0) return;
+    try {
+        const activeBuffer = useBufferAasInput ? previousNeighborCountsBufferA : previousNeighborCountsBufferB;
+        const encoder = device.createCommandEncoder();
+        encoder.copyBufferToBuffer(activeBuffer, 0, neighborReadBuffer, 0, PARTICLE_COUNT * 4);
+        device.queue.submit([encoder.finish()]);
+        await neighborReadBuffer.mapAsync(GPUMapMode.READ);
+        const mapped = new Uint32Array(neighborReadBuffer.getMappedRange());
+        let sum = 0;
+        for (let i = 0; i < PARTICLE_COUNT; i++) { sum += mapped[i]; }
+        const avg = sum / PARTICLE_COUNT;
+        neighborReadBuffer.unmap();
+        avgNeighborDensity = Math.min(avg / 20, 1);
+        return avgNeighborDensity;
+    } catch (e) {
+        return null;
+    }
+}
+

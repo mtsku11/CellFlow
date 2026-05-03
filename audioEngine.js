@@ -38,6 +38,11 @@ class CellFlowAudioEngine {
         this.noiseFilter = null;
         this.noiseGain = null;
         this.noiseSource = null;
+        this.crackleSource = null;
+        this.crackleGain = null;
+        this.crackleFilter = null;
+        this.crackleFilter2 = null;
+        this.smoothCrackle = 0;
         this.shaper = null;
         this.mediaDestination = null;
         this.voices = [];
@@ -256,6 +261,7 @@ class CellFlowAudioEngine {
         this.noiseGain.connect(this.master);
         this.noiseGain.connect(this.delay);
         this.noiseSource.start();
+        this._initCrackleLayer();
 
         // Drone layer — separate ambient bed driven by cloudRatio
         this.smoothedCloud = 0;
@@ -378,6 +384,28 @@ class CellFlowAudioEngine {
         this.droneGain.gain.cancelScheduledValues(now);
         this.droneGain.gain.setValueAtTime(this.droneGain.gain.value, now);
         this.droneGain.gain.linearRampToValueAtTime(targetDroneGain, now + 3.0);
+        // crackle layer
+        const crackDensity = (typeof analysis.avgNeighborDensity === 'number') ? analysis.avgNeighborDensity : null;
+        if (crackDensity !== null) {
+            this.smoothCrackle = this.smoothCrackle * 0.92 + crackDensity * 0.08;
+        } else {
+            this.smoothCrackle *= 0.95;
+        }
+        if (this.crackleGain) {
+            const targetGain = 0.0001 + this.smoothCrackle * 0.0549;
+            const targetFreq = 2200 + this.smoothCrackle * 2600;
+            const now2 = this.ctx.currentTime;
+            this.crackleGain.gain.cancelScheduledValues(now2);
+            this.crackleGain.gain.setValueAtTime(this.crackleGain.gain.value, now2);
+            this.crackleGain.gain.linearRampToValueAtTime(targetGain, now2 + 0.15);
+            this.crackleFilter.frequency.cancelScheduledValues(now2);
+            this.crackleFilter.frequency.setValueAtTime(this.crackleFilter.frequency.value, now2);
+            this.crackleFilter.frequency.linearRampToValueAtTime(targetFreq, now2 + 0.15);
+        }
+        this.crackleGain = null;
+        this.crackleFilter = null;
+        this.crackleFilter2 = null;
+        this.smoothCrackle = 0;
     }
 
     updateOrganisms(analysis) {
@@ -818,6 +846,30 @@ class CellFlowAudioEngine {
             burst.start(start);
             burst.stop(start + duration + 0.02);
         }
+    }
+
+    _initCrackleLayer() {
+        const ctx = this.context;
+        const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.5), ctx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.5;
+        this.crackleSource = ctx.createBufferSource();
+        this.crackleSource.buffer = buf;
+        this.crackleSource.loop = true;
+        this.crackleFilter = ctx.createBiquadFilter();
+        this.crackleFilter.type = 'bandpass';
+        this.crackleFilter.frequency.value = 2800;
+        this.crackleFilter.Q.value = 4.5;
+        this.crackleFilter2 = ctx.createBiquadFilter();
+        this.crackleFilter2.type = 'highpass';
+        this.crackleFilter2.frequency.value = 1800;
+        this.crackleGain = ctx.createGain();
+        this.crackleGain.gain.value = 0.0001;
+        this.crackleSource.connect(this.crackleFilter);
+        this.crackleFilter.connect(this.crackleFilter2);
+        this.crackleFilter2.connect(this.crackleGain);
+        this.crackleGain.connect(this.master);
+        this.crackleSource.start();
     }
 }
 
