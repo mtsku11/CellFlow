@@ -48,6 +48,7 @@ class CellFlowAudioEngine {
         this.latestOrganismAnalysis = null;
         this.lastGrainTime = 0;
         this.rhythms = {};
+        this.previousOrganismIds = new Set();
         this.saturatorAmount = null;
     }
 
@@ -344,6 +345,25 @@ class CellFlowAudioEngine {
 
         this.update(this.latestParams || {});
 
+        const currentIds = new Map();
+        analysis.organisms.forEach((o) => currentIds.set(o.id, o));
+
+        currentIds.forEach((organism, id) => {
+            if (!this.previousOrganismIds.has(id)) {
+                this.spawnBirthTransient(organism);
+            }
+        });
+
+        this.previousOrganismIds.forEach((id) => {
+            if (!currentIds.has(id) && this._prevOrganismMap) {
+                const deadOrganism = this._prevOrganismMap.get(id);
+                if (deadOrganism) this.spawnDeathTail(deadOrganism);
+            }
+        });
+
+        this.previousOrganismIds = new Set(currentIds.keys());
+        this._prevOrganismMap = currentIds;
+
         const now = this.context.currentTime;
         const organismsByClass = ORGANISM_CLASS_ORDER.reduce((groups, sizeClass) => {
             groups[sizeClass] = analysis.organisms
@@ -370,6 +390,91 @@ class CellFlowAudioEngine {
         });
     }
 
+    spawnBirthTransient(organism) {
+        const ctx = this.context;
+        const now = ctx.currentTime;
+        const sizeClass = organism.sizeClass || 'medium';
+        const freq = sizeClass === 'large' ? 55 : sizeClass === 'medium' ? 330 : 1800;
+        const duration = sizeClass === 'large' ? 0.2 : sizeClass === 'medium' ? 0.12 : 0.08;
+        const panValue = clamp((organism.xNorm ?? 0.5) * 2 - 1, -0.92, 0.92);
+
+        const osc = ctx.createOscillator();
+        const filter = ctx.createBiquadFilter();
+        const panner = ctx.createStereoPanner();
+        const amp = ctx.createGain();
+        const delaySend = ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now);
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(freq, now);
+        filter.Q.setValueAtTime(7, now);
+        panner.pan.setValueAtTime(panValue, now);
+        amp.gain.setValueAtTime(0.0001, now);
+        amp.gain.exponentialRampToValueAtTime(0.04, now + 0.005);
+        amp.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+        delaySend.gain.setValueAtTime(0.12, now);
+
+        osc.connect(filter);
+        filter.connect(panner);
+        panner.connect(amp);
+        amp.connect(this.master);
+        amp.connect(delaySend);
+        delaySend.connect(this.delay);
+
+        osc.start(now);
+        osc.stop(now + duration + 0.1);
+
+        window.setTimeout(() => {
+            [osc, filter, panner, amp, delaySend].forEach((node) => {
+                try { node.disconnect(); } catch {}
+            });
+        }, (duration + 0.2) * 1000);
+    }
+
+    spawnDeathTail(organism) {
+        const ctx = this.context;
+        const now = ctx.currentTime;
+        const sizeClass = organism.sizeClass || 'medium';
+        const baseFreq = sizeClass === 'large' ? 55 : sizeClass === 'medium' ? 330 : 1800;
+        const freq = baseFreq * 0.667;
+        const duration = sizeClass === 'large' ? 0.8 : sizeClass === 'medium' ? 0.5 : 0.3;
+        const panValue = clamp((organism.xNorm ?? 0.5) * 2 - 1, -0.92, 0.92);
+        const oscType = sizeClass === 'large' ? 'sine' : sizeClass === 'medium' ? 'triangle' : 'sine';
+
+        const osc = ctx.createOscillator();
+        const filter = ctx.createBiquadFilter();
+        const panner = ctx.createStereoPanner();
+        const amp = ctx.createGain();
+        const delaySend = ctx.createGain();
+
+        osc.type = oscType;
+        osc.frequency.setValueAtTime(freq, now);
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(2000, now);
+        filter.frequency.exponentialRampToValueAtTime(200, now + duration);
+        panner.pan.setValueAtTime(panValue, now);
+        amp.gain.setValueAtTime(0.025, now);
+        amp.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+        delaySend.gain.setValueAtTime(0.2, now);
+
+        osc.connect(filter);
+        filter.connect(panner);
+        panner.connect(amp);
+        amp.connect(this.master);
+        amp.connect(delaySend);
+        delaySend.connect(this.delay);
+
+        osc.start(now);
+        osc.stop(now + duration + 0.2);
+
+        window.setTimeout(() => {
+            [osc, filter, panner, amp, delaySend].forEach((node) => {
+                try { node.disconnect(); } catch {}
+            });
+        }, (duration + 0.3) * 1000);
+    }
+
     getOrganismSoundShape(organism) {
         const speed = clamp(organism.speedNorm ?? 0);
         const yPitch = 1 - clamp(organism.yNorm ?? 0.5);
@@ -377,16 +482,18 @@ class CellFlowAudioEngine {
         const params = this.latestParams || {};
         const tension = norm(params.k ?? 16.57, 1.5, 30);
         const spectralBalance = norm(params.balance ?? 0.79, 0.01, 1.5);
+        const density = clamp(organism.densityRatio ?? 0.5);
+        const boundary = clamp(organism.boundaryContrast ?? 0.5);
 
         if (organism.sizeClass === 'large') {
             return {
                 baseFrequency: 28 + yPitch * 34 + mass * 18,
                 duration: 4.8 - speed * 3.6,
-                attackRatio: 0.34 - speed * 0.22,
+                attackRatio: (0.34 - speed * 0.22) * (1.2 - boundary * 0.8),
                 gain: 0.095,
                 modRatio: 0.24 + speed * 1.2,
-                modDepth: 55 + mass * 115 + tension * 65,
-                filterRatio: 2.8 + spectralBalance * 2.3,
+                modDepth: 55 + mass * 115 + tension * 65 + density * 80,
+                filterRatio: 2.8 + spectralBalance * 2.3 + density * 1.5,
                 grainCount: 8 + Math.round(mass * 16),
                 grainDuration: 0.34 - speed * 0.22
             };
@@ -396,11 +503,11 @@ class CellFlowAudioEngine {
             return {
                 baseFrequency: 145 + yPitch * 380 + mass * 120,
                 duration: 1.65 - speed * 1.05,
-                attackRatio: 0.18 - speed * 0.1,
+                attackRatio: (0.18 - speed * 0.1) * (1.2 - boundary * 0.8),
                 gain: 0.062,
                 modRatio: 0.72 + speed * 2.1,
-                modDepth: 42 + mass * 90 + tension * 80,
-                filterRatio: 2.0 + spectralBalance * 2.8,
+                modDepth: 42 + mass * 90 + tension * 80 + density * 60,
+                filterRatio: 2.0 + spectralBalance * 2.8 + density * 2.0,
                 grainCount: 7 + Math.round(mass * 18),
                 grainDuration: 0.13 - speed * 0.07
             };
@@ -409,11 +516,11 @@ class CellFlowAudioEngine {
         return {
             baseFrequency: 980 + yPitch * 4200 + mass * 800,
             duration: 0.42 - speed * 0.28,
-            attackRatio: 0.05,
+            attackRatio: 0.05 * (1.2 - boundary * 0.8),
             gain: 0.028,
             modRatio: 1.7 + speed * 5.5,
-            modDepth: 25 + mass * 55 + tension * 90,
-            filterRatio: 1.25 + spectralBalance * 1.7,
+            modDepth: 25 + mass * 55 + tension * 90 + density * 45,
+            filterRatio: 1.25 + spectralBalance * 1.7 + density * 1.2,
             grainCount: 6 + Math.round(mass * 14),
             grainDuration: 0.038 - speed * 0.018
         };
@@ -444,7 +551,9 @@ class CellFlowAudioEngine {
         carrier.type = organism.sizeClass === 'large' ? 'sawtooth' : organism.sizeClass === 'medium' ? 'triangle' : 'sine';
         modulator.type = organism.sizeClass === 'small' ? 'square' : 'sine';
         carrier.frequency.setValueAtTime(baseFrequency, start);
-        carrier.frequency.exponentialRampToValueAtTime(clamp(baseFrequency * (0.92 + speed * 0.26), 24, 7200), end);
+        const vyDir = clamp((organism.vy ?? 0) * 0.5 + 0.5);
+        const pitchEnd = baseFrequency * (0.85 + vyDir * 0.3 + speed * 0.15);
+        carrier.frequency.exponentialRampToValueAtTime(clamp(pitchEnd, 24, 7200), end);
         modulator.frequency.setValueAtTime(clamp(baseFrequency * shape.modRatio, 0.2, 9000), start);
         modGain.gain.setValueAtTime(shape.modDepth * (0.65 + speed * 0.55), start);
         filter.type = organism.sizeClass === 'large' ? 'lowpass' : 'bandpass';
