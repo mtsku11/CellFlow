@@ -127,7 +127,7 @@ function classifyOrganism(massRatio, metrics = {}) {
     return 'small';
 }
 
-function buildOrganismAnalysis(particleData) {
+function buildOrganismAnalysis(particleData, dtScale = 1) {
     const analysisCellSize = constrain(Math.max(20, radius * 0.34), 20, 34);
     const cols = Math.round(constrain(canvasWidth / analysisCellSize, 28, 76));
     const rows = Math.round(constrain(canvasHeight / analysisCellSize, 18, 48));
@@ -341,7 +341,7 @@ function buildOrganismAnalysis(particleData) {
             radius: organismRadius,
             radiusNorm,
             speed: avgSpeed,
-            speedNorm: constrain(avgSpeed / Math.max(1.5, radius * 0.16), 0, 1),
+            speedNorm: constrain((avgSpeed * dtScale) / (Math.max(1.5, radius * 0.16) * 0.35), 0, 1),
             vx: weightedVx / mass,
             vy: weightedVy / mass
         });
@@ -623,7 +623,7 @@ export async function analyzeOrganisms() {
 
         await readBuffer.mapAsync(GPUMapMode.READ);
         const mapped = readBuffer.getMappedRange();
-        const analysis = buildOrganismAnalysis(new Float32Array(mapped));
+        const analysis = buildOrganismAnalysis(new Float32Array(mapped), delta_t);
         readBuffer.unmap();
         readBuffer.destroy();
         return analysis;

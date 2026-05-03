@@ -1,3 +1,5 @@
+import { MarkovRhythm } from './markovRhythm.js';
+
 const VOICE_RATIOS = [1, 1.125, 1.25, 1.5, 1.75, 2.25];
 const MAX_VOICES = VOICE_RATIOS.length;
 const CONTROL_UPDATE_MS = 33;
@@ -45,11 +47,7 @@ class CellFlowAudioEngine {
         this.latestParams = null;
         this.latestOrganismAnalysis = null;
         this.lastGrainTime = 0;
-        this.lastOrganismEvents = {
-            large: 0,
-            medium: 0,
-            small: 0
-        };
+        this.rhythms = {};
         this.saturatorAmount = null;
     }
 
@@ -171,6 +169,7 @@ class CellFlowAudioEngine {
         this.mediaDestination = null;
         this.saturatorAmount = null;
         this.latestOrganismAnalysis = null;
+        this.rhythms = {};
     }
 
     createVoices() {
@@ -357,22 +356,18 @@ class CellFlowAudioEngine {
             const organisms = organismsByClass[sizeClass];
             if (!organisms.length) return;
 
+            if (!this.rhythms[sizeClass]) this.rhythms[sizeClass] = new MarkovRhythm(sizeClass);
+            const rhythm = this.rhythms[sizeClass];
             const representative = organisms[0];
-            const cooldown = this.getOrganismCooldown(sizeClass, representative.speedNorm, organisms.length);
-            if (now - this.lastOrganismEvents[sizeClass] < cooldown) return;
+            const beats = rhythm.tick(representative.speedNorm, now);
 
-            organisms.slice(0, Math.min(2, organisms.length)).forEach((organism, index) => {
-                this.spawnOrganismEnvelope(organism, index * 0.035);
+            beats.forEach((beat) => {
+                if (!beat.fire) return;
+                organisms.slice(0, Math.min(2, organisms.length)).forEach((organism, index) => {
+                    this.spawnOrganismEnvelope(organism, index * 0.035, beat.mods);
+                });
             });
-            this.lastOrganismEvents[sizeClass] = now;
         });
-    }
-
-    getOrganismCooldown(sizeClass, speedNorm, count) {
-        const densityPush = Math.min(0.24, count * 0.035);
-        if (sizeClass === 'large') return clamp(3.4 - speedNorm * 2.15 - densityPush, 0.68, 3.6);
-        if (sizeClass === 'medium') return clamp(1.35 - speedNorm * 0.9 - densityPush, 0.28, 1.45);
-        return clamp(0.42 - speedNorm * 0.22 - densityPush, 0.18, 0.48);
     }
 
     getOrganismSoundShape(organism) {
@@ -424,7 +419,7 @@ class CellFlowAudioEngine {
         };
     }
 
-    spawnOrganismEnvelope(organism, offset = 0) {
+    spawnOrganismEnvelope(organism, offset = 0, rhythmMods = null) {
         const ctx = this.context;
         const shape = this.getOrganismSoundShape(organism);
         const speed = clamp(organism.speedNorm ?? 0);
@@ -434,7 +429,8 @@ class CellFlowAudioEngine {
         const releaseStart = start + Math.max(attack + 0.012, duration * (0.36 + (1 - speed) * 0.28));
         const end = start + duration;
         const baseFrequency = clamp(shape.baseFrequency, 24, 6400);
-        const peakGain = shape.gain * (0.72 + clamp(organism.massRatio * 8) * 0.6);
+        const velocityMult = rhythmMods ? rhythmMods.velocityMult : 1;
+        const peakGain = shape.gain * (0.72 + clamp(organism.massRatio * 8) * 0.6) * velocityMult;
         const panValue = clamp((organism.xNorm ?? 0.5) * 2 - 1, -0.92, 0.92);
 
         const carrier = ctx.createOscillator();
@@ -461,13 +457,14 @@ class CellFlowAudioEngine {
         amp.gain.setValueAtTime(0.0001, start);
         amp.gain.exponentialRampToValueAtTime(clamp(peakGain, 0.002, 0.16), start + attack);
 
-        // Rhythmic amplitude pulse LFO during sustain — rate and depth scale with speed
+        // Rhythmic amplitude pulse LFO during sustain — rate and depth scale with speed and Markov state
+        const pulseMult = rhythmMods ? rhythmMods.pulseMult : 1;
         const peakG = clamp(peakGain, 0.002, 0.16);
-        const pulseHz = organism.sizeClass === 'large'
+        const pulseHz = (organism.sizeClass === 'large'
             ? 0.4 + speed * 3.1
             : organism.sizeClass === 'medium'
             ? 0.8 + speed * 6.2
-            : 2.0 + speed * 14.0;
+            : 2.0 + speed * 14.0) * pulseMult;
         const pulseInterval = 1 / pulseHz;
         const troughRatio = 0.45 - speed * 0.25;
         const troughG = clamp(peakG * troughRatio, 0.0005, peakG * 0.85);
@@ -508,14 +505,15 @@ class CellFlowAudioEngine {
             });
         }, (duration + offset + 0.18) * 1000);
 
-        this.spawnOrganismGrains(organism, baseFrequency, shape, offset);
+        this.spawnOrganismGrains(organism, baseFrequency, shape, offset, rhythmMods);
     }
 
-    spawnOrganismGrains(organism, baseFrequency, shape, offset = 0) {
+    spawnOrganismGrains(organism, baseFrequency, shape, offset = 0, rhythmMods = null) {
         const ctx = this.context;
         const speed = clamp(organism.speedNorm ?? 0);
         const panCenter = clamp((organism.xNorm ?? 0.5) * 2 - 1, -0.9, 0.9);
-        const grainCount = Math.min(organism.sizeClass === 'small' ? 28 : 42, shape.grainCount);
+        const grainMult = rhythmMods ? rhythmMods.grainMult : 1;
+        const grainCount = Math.min(organism.sizeClass === 'small' ? 28 : 42, Math.max(1, Math.round(shape.grainCount * grainMult)));
         const spread = organism.sizeClass === 'large' ? 0.72 : organism.sizeClass === 'medium' ? 1.15 : 2.6;
         const windowDuration = Math.max(0.06, shape.duration * (organism.sizeClass === 'large' ? 0.72 : 0.48));
 
