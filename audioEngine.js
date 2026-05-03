@@ -460,6 +460,28 @@ class CellFlowAudioEngine {
 
         amp.gain.setValueAtTime(0.0001, start);
         amp.gain.exponentialRampToValueAtTime(clamp(peakGain, 0.002, 0.16), start + attack);
+
+        // Rhythmic amplitude pulse LFO during sustain — rate and depth scale with speed
+        const peakG = clamp(peakGain, 0.002, 0.16);
+        const pulseHz = organism.sizeClass === 'large'
+            ? 0.4 + speed * 3.1
+            : organism.sizeClass === 'medium'
+            ? 0.8 + speed * 6.2
+            : 2.0 + speed * 14.0;
+        const pulseInterval = 1 / pulseHz;
+        const troughRatio = 0.45 - speed * 0.25;
+        const troughG = clamp(peakG * troughRatio, 0.0005, peakG * 0.85);
+        const sustainStart = start + attack;
+        let pulseT = sustainStart;
+        while (pulseT + pulseInterval <= releaseStart) {
+            amp.gain.linearRampToValueAtTime(troughG, pulseT + pulseInterval * 0.5);
+            amp.gain.linearRampToValueAtTime(peakG, pulseT + pulseInterval);
+            pulseT += pulseInterval;
+        }
+        if (pulseT + pulseInterval * 0.5 < releaseStart) {
+            amp.gain.linearRampToValueAtTime(troughG, pulseT + pulseInterval * 0.5);
+        }
+
         amp.gain.setTargetAtTime(0.0001, releaseStart, Math.max(0.025, (end - releaseStart) * 0.42));
 
         modulator.connect(modGain);
@@ -595,7 +617,7 @@ class CellFlowAudioEngine {
             const organismMass = this.latestOrganismAnalysis?.organismMassRatio ?? 0;
             const now = this.context.currentTime;
             const richness = Math.pow(density, 0.72);
-            const interval = 0.32 - cloudRatio * 0.18 - richness * 0.06 - flowRate * 0.03 - lfoDepth * 0.012;
+            const interval = 0.32 - cloudRatio * 0.18 - richness * 0.06 - flowRate * 0.14 - lfoDepth * 0.012;
 
             if (now - this.lastGrainTime >= interval) {
                 const count = Math.max(1, Math.round(1 + cloudRatio * richness * 5 - organismMass * 2));
