@@ -338,14 +338,14 @@ class CellFlowAudioEngine {
         const fmDepth = 7 + pressure * 72 + drive * 66 + forceSpread * 48 + richness * 70;
         const pulse = 0.76 + sharedLfo * 0.24;
 
-        setParam(this.master.gain, clamp(masterLevel * pulse, 0.0001, 0.24), now, 0.06);
+        setParam(this.master.gain, 0.0001, now, 0.06); // TEST: mute master
         setParam(this.delay.delayTime, 0.06 + (1 - damping) * 0.32 + orbitRatio * 0.18 + unipolarLfo * pulseDepth * 0.045, now, 0.08);
         setParam(this.delayFeedback.gain, clamp(0.14 + forceSpread * 0.22 + drive * 0.16 + pulseDepth * 0.12, 0.05, 0.68), now, 0.08);
         setParam(this.delayWet.gain, clamp(0.04 + spectralBalance * 0.1 + forceSpread * 0.1 + richness * 0.045, 0.02, 0.27), now, 0.06);
         setParam(this.delayFilter.frequency, 600 + spectralBalance * 3900 + damping * 900 + unipolarLfo * pulseDepth * 1300, now, 0.06);
         setParam(this.noiseFilter.frequency, 380 + tension * 3600 + foldOffset * 1000 + richness * 1200 + cloudRatio * 1600, now, 0.05);
         setParam(this.noiseFilter.Q, 1.2 + cohesion * 7 + forceSpread * 4 - cloudRatio * 0.6, now, 0.05);
-        setParam(this.noiseGain.gain, clamp(0.002 + cloudRatio * 0.075 + motionRatio * 0.025 + pressure * 0.006, 0.0001, 0.09), now, 0.08);
+        setParam(this.noiseGain.gain, 0.0001, now, 0.08); // TEST: mute noise bed
 
         const nextSaturatorAmount = 1 + drive * 2.2 + pressure * 1.1 + richness * 0.55;
         if (this.saturatorAmount === null || Math.abs(nextSaturatorAmount - this.saturatorAmount) > 0.08) {
@@ -378,14 +378,14 @@ class CellFlowAudioEngine {
             setParam(voice.filter.frequency, clamp(filterBase * (0.65 + index * 0.18), 80, 9000), now, 0.05);
             setParam(voice.filter.Q, clamp(q, 0.2, 18), now, 0.05);
             setParam(voice.panner.pan, panValue, now, 0.08);
-            setParam(voice.gain.gain, voiceGain, now, 0.08);
+            setParam(voice.gain.gain, 0.0001, now, 0.08); // TEST: mute continuous voices
             setParam(voice.delaySend.gain, clamp(delaySendGain, 0.005, 0.25), now, 0.06);
         });
 
         // Drone layer: exponential smoothing + long ramp driven by cloudRatio
         const rawCloud = analysis.cloudRatio ?? 1;
         this.smoothedCloud += 0.02 * (rawCloud - this.smoothedCloud);
-        const targetDroneGain = clamp(this.smoothedCloud * 0.08, 0.0001, 0.08);
+        const targetDroneGain = 0.0001; // TEST: mute drone
         this.droneGain.gain.cancelScheduledValues(now);
         this.droneGain.gain.setValueAtTime(this.droneGain.gain.value, now);
         this.droneGain.gain.linearRampToValueAtTime(targetDroneGain, now + 3.0);
@@ -397,7 +397,7 @@ class CellFlowAudioEngine {
             this.smoothCrackle *= 0.95;
         }
         if (this.crackleGain) {
-            const targetGain = 0.0001 + this.smoothCrackle * 0.0549;
+            const targetGain = 0.0001; // TEST: mute crackle
             const targetFreq = 2200 + this.smoothCrackle * 2600;
             const now2 = this.context.currentTime;
             this.crackleGain.gain.cancelScheduledValues(now2);
@@ -418,18 +418,19 @@ class CellFlowAudioEngine {
         const currentIds = new Map();
         analysis.organisms.forEach((o) => currentIds.set(o.id, o));
 
-        currentIds.forEach((organism, id) => {
-            if (!this.previousOrganismIds.has(id)) {
-                this.spawnBirthTransient(organism);
-            }
-        });
+        // TEST: skip birth/death transients
+        // currentIds.forEach((organism, id) => {
+        //     if (!this.previousOrganismIds.has(id)) {
+        //         this.spawnBirthTransient(organism);
+        //     }
+        // });
 
-        this.previousOrganismIds.forEach((id) => {
-            if (!currentIds.has(id) && this._prevOrganismMap) {
-                const deadOrganism = this._prevOrganismMap.get(id);
-                if (deadOrganism) this.spawnDeathTail(deadOrganism);
-            }
-        });
+        // this.previousOrganismIds.forEach((id) => {
+        //     if (!currentIds.has(id) && this._prevOrganismMap) {
+        //         const deadOrganism = this._prevOrganismMap.get(id);
+        //         if (deadOrganism) this.spawnDeathTail(deadOrganism);
+        //     }
+        // });
 
         this.previousOrganismIds = new Set(currentIds.keys());
         this._prevOrganismMap = currentIds;
@@ -442,24 +443,24 @@ class CellFlowAudioEngine {
             return groups;
         }, {});
 
-        ORGANISM_CLASS_ORDER.forEach((sizeClass) => {
-            const organisms = organismsByClass[sizeClass];
-            if (!organisms.length) return;
-
-            if (!this.rhythms[sizeClass]) this.rhythms[sizeClass] = new MarkovRhythm(sizeClass);
-            const rhythm = this.rhythms[sizeClass];
-            const representative = organisms[0];
-            const beats = rhythm.tick(representative.speedNorm, now);
-
-            beats.forEach((beat) => {
-                if (!beat.fire) return;
-                organisms.slice(0, Math.min(2, organisms.length)).forEach((organism, index) => {
-                    this.spawnOrganismEnvelope(organism, index * 0.035, beat.mods);
-                });
-            });
-        });
+        // TEST: skip organism rhythm envelopes
+        // ORGANISM_CLASS_ORDER.forEach((sizeClass) => {
+        //     const organisms = organismsByClass[sizeClass];
+        //     if (!organisms.length) return;
+        //     if (!this.rhythms[sizeClass]) this.rhythms[sizeClass] = new MarkovRhythm(sizeClass);
+        //     const rhythm = this.rhythms[sizeClass];
+        //     const representative = organisms[0];
+        //     const beats = rhythm.tick(representative.speedNorm, now);
+        //     beats.forEach((beat) => {
+        //         if (!beat.fire) return;
+        //         organisms.slice(0, Math.min(2, organisms.length)).forEach((organism, index) => {
+        //             this.spawnOrganismEnvelope(organism, index * 0.035, beat.mods);
+        //         });
+        //     });
+        // });
 
         const colorVelocity = analysis.colorVelocity;
+        console.log('[COLOR DATA]', colorVelocity);
         if (colorVelocity && colorVelocity[0]) {
             const redSpeedNorm = colorVelocity[0].speedNorm;
             if (!this.rhythms._color0) this.rhythms._color0 = new MarkovRhythm('medium');
@@ -769,8 +770,9 @@ class CellFlowAudioEngine {
         const now = ctx.currentTime;
         const velocityMult = mods ? mods.velocityMult : 1;
         const freq = 220 + speedNorm * 440;
-        const duration = 0.12 - speedNorm * 0.06;
-        const peakGain = clamp(0.04 * velocityMult, 0.005, 0.12);
+        const duration = 0.18 - speedNorm * 0.08;
+        const peakGain = clamp(0.25 * velocityMult, 0.05, 0.4); // TEST: boosted gain
+        console.log('[COLOR SEQ]', { speedNorm: speedNorm.toFixed(3), freq: freq.toFixed(0), bpm: this.rhythms._color0?.lastBPM });
 
         const osc = ctx.createOscillator();
         const filter = ctx.createBiquadFilter();
@@ -788,7 +790,7 @@ class CellFlowAudioEngine {
 
         osc.connect(filter);
         filter.connect(amp);
-        amp.connect(this.master);
+        amp.connect(ctx.destination); // TEST: bypass master, go direct to output
 
         osc.start(now);
         osc.stop(now + duration + 0.02);
