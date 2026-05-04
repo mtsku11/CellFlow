@@ -361,7 +361,12 @@ class CellFlowAudioEngine {
             const voiceGain = isActive ? (0.045 / activeVoices) * (0.52 + cohesion * 0.11 * organismPresence + organismPresence * 0.42 + largePresence * 0.28 + motionRatio * 0.24) : 0.0001;
             const partialGain = isActive ? (0.002 + richness * 0.012) * organismPresence * (1 + index * 0.08) * (0.7 + unipolarLfo * pulseDepth * 0.45) : 0.0001;
             const partialFrequency = frequency * (2 + index * 0.35 + spectralBalance * 1.1 + richness * 0.9);
-            const pan = activeVoices === 1 ? 0 : (index / (activeVoices - 1)) * 1.7 - 0.85;
+            const organism = this.latestOrganismAnalysis?.organisms?.[index];
+            const xNorm = organism?.xNorm ?? (activeVoices === 1 ? 0.5 : index / (activeVoices - 1));
+            const yNorm = organism?.yNorm ?? 0.5;
+            const panValue = clamp(xNorm * 2 - 1, -0.92, 0.92);
+            const baseSend = 0.035 + forceSpread * 0.13 + pulseDepth * 0.1 + richness * 0.055;
+            const delaySendGain = baseSend * (1 - clamp(yNorm) * 0.6);
 
             setParam(voice.carrier.frequency, clamp(frequency, 22, 1200), now, 0.06);
             setParam(voice.modulator.frequency, clamp(frequency * (0.33 + foldOffset * 1.8 + index * 0.08 + unipolarLfo * pulseDepth * 0.28), 0.4, 2400), now, 0.06);
@@ -372,9 +377,9 @@ class CellFlowAudioEngine {
             setParam(voice.partialGain.gain, clamp(partialGain, 0.0001, 0.055), now, 0.07);
             setParam(voice.filter.frequency, clamp(filterBase * (0.65 + index * 0.18), 80, 9000), now, 0.05);
             setParam(voice.filter.Q, clamp(q, 0.2, 18), now, 0.05);
-            setParam(voice.panner.pan, clamp(pan + (orbitRatio - 0.5) * 0.35 + sharedLfo * 0.18, -1, 1), now, 0.08);
+            setParam(voice.panner.pan, panValue, now, 0.08);
             setParam(voice.gain.gain, voiceGain, now, 0.08);
-            setParam(voice.delaySend.gain, clamp(0.035 + forceSpread * 0.13 + pulseDepth * 0.1 + richness * 0.055, 0.02, 0.25), now, 0.06);
+            setParam(voice.delaySend.gain, clamp(delaySendGain, 0.005, 0.25), now, 0.06);
         });
 
         // Drone layer: exponential smoothing + long ramp driven by cloudRatio
@@ -394,7 +399,7 @@ class CellFlowAudioEngine {
         if (this.crackleGain) {
             const targetGain = 0.0001 + this.smoothCrackle * 0.0549;
             const targetFreq = 2200 + this.smoothCrackle * 2600;
-            const now2 = this.ctx.currentTime;
+            const now2 = this.context.currentTime;
             this.crackleGain.gain.cancelScheduledValues(now2);
             this.crackleGain.gain.setValueAtTime(this.crackleGain.gain.value, now2);
             this.crackleGain.gain.linearRampToValueAtTime(targetGain, now2 + 0.15);
@@ -402,10 +407,6 @@ class CellFlowAudioEngine {
             this.crackleFilter.frequency.setValueAtTime(this.crackleFilter.frequency.value, now2);
             this.crackleFilter.frequency.linearRampToValueAtTime(targetFreq, now2 + 0.15);
         }
-        this.crackleGain = null;
-        this.crackleFilter = null;
-        this.crackleFilter2 = null;
-        this.smoothCrackle = 0;
     }
 
     updateOrganisms(analysis) {
@@ -630,7 +631,9 @@ class CellFlowAudioEngine {
         filter.frequency.exponentialRampToValueAtTime(clamp(baseFrequency * (shape.filterRatio + 1.2 + speed * 3.4), 90, 13000), releaseStart);
         filter.Q.setValueAtTime(organism.sizeClass === 'large' ? 4.8 : 7.5 + speed * 5.5, start);
         panner.pan.setValueAtTime(panValue, start);
-        delaySend.gain.setValueAtTime(organism.sizeClass === 'large' ? 0.18 : 0.11 + speed * 0.1, start);
+        const envYNorm = organism.yNorm ?? 0.5;
+        const envBaseSend = organism.sizeClass === 'large' ? 0.18 : 0.11 + speed * 0.1;
+        delaySend.gain.setValueAtTime(clamp(envBaseSend * (1 - clamp(envYNorm) * 0.6), 0.01, 0.3), start);
 
         amp.gain.setValueAtTime(0.0001, start);
         amp.gain.exponentialRampToValueAtTime(clamp(peakGain, 0.002, 0.16), start + attack);
