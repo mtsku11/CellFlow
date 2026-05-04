@@ -130,7 +130,7 @@ function classifyOrganism(massRatio, metrics = {}) {
     return 'small';
 }
 
-function buildOrganismAnalysis(particleData, dtScale = 1) {
+function buildOrganismAnalysis(particleData, particleUints, dtScale = 1) {
     const analysisCellSize = constrain(Math.max(20, radius * 0.34), 20, 34);
     const cols = Math.round(constrain(canvasWidth / analysisCellSize, 28, 76));
     const rows = Math.round(constrain(canvasHeight / analysisCellSize, 18, 48));
@@ -147,6 +147,8 @@ function buildOrganismAnalysis(particleData, dtScale = 1) {
 
     let totalSpeed = 0;
     let movingParticles = 0;
+    const typeSpeedSum = new Float64Array(numParticleTypes);
+    const typeCount = new Uint32Array(numParticleTypes);
 
     for (let i = 0; i < PARTICLE_COUNT; i++) {
         const base = i * 8;
@@ -160,6 +162,12 @@ function buildOrganismAnalysis(particleData, dtScale = 1) {
         const row = Math.floor(constrain(y, 0, canvasHeight - 1) / cellHeight);
         const cell = cells[row * cols + col];
         const speed = Math.hypot(vx || 0, vy || 0);
+
+        const ptype = particleUints[base + 6];
+        if (ptype < numParticleTypes) {
+            typeSpeedSum[ptype] += speed;
+            typeCount[ptype]++;
+        }
 
         cell.count++;
         cell.x += x;
@@ -357,6 +365,12 @@ function buildOrganismAnalysis(particleData, dtScale = 1) {
         return groups;
     }, { large: 0, medium: 0, small: 0 });
 
+    const maxTypeSpeed = Math.max(1e-6, ...Array.from(typeSpeedSum, (sum, i) => typeCount[i] ? sum / typeCount[i] : 0));
+    const colorVelocity = Array.from({ length: numParticleTypes }, (_, i) => {
+        const avg = typeCount[i] ? typeSpeedSum[i] / typeCount[i] : 0;
+        return { type: i, speedNorm: constrain(avg / maxTypeSpeed, 0, 1) };
+    });
+
     return {
         timestamp: performance.now(),
         particleCount: PARTICLE_COUNT,
@@ -366,7 +380,8 @@ function buildOrganismAnalysis(particleData, dtScale = 1) {
         organismMassRatio: constrain(organismMass / PARTICLE_COUNT, 0, 1),
         cloudRatio: constrain(1 - organismMass / PARTICLE_COUNT, 0, 1),
         averageSpeed: totalSpeed / PARTICLE_COUNT,
-        motionRatio: movingParticles / PARTICLE_COUNT
+        motionRatio: movingParticles / PARTICLE_COUNT,
+        colorVelocity
     };
 }
 
@@ -630,7 +645,7 @@ export async function analyzeOrganisms() {
 
         await readBuffer.mapAsync(GPUMapMode.READ);
         const mapped = readBuffer.getMappedRange();
-        const analysis = buildOrganismAnalysis(new Float32Array(mapped), delta_t);
+        const analysis = buildOrganismAnalysis(new Float32Array(mapped), new Uint32Array(mapped), delta_t);
         readBuffer.unmap();
         readBuffer.destroy();
         analysis.avgNeighborDensity = avgNeighborDensity;

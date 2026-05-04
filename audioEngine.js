@@ -458,6 +458,17 @@ class CellFlowAudioEngine {
                 });
             });
         });
+
+        const colorVelocity = analysis.colorVelocity;
+        if (colorVelocity && colorVelocity[0]) {
+            const redSpeedNorm = colorVelocity[0].speedNorm;
+            if (!this.rhythms._color0) this.rhythms._color0 = new MarkovRhythm('medium');
+            const colorBeats = this.rhythms._color0.tick(redSpeedNorm, now);
+            colorBeats.forEach((beat) => {
+                if (!beat.fire) return;
+                this.spawnColorSequencerHit(redSpeedNorm, beat.mods);
+            });
+        }
     }
 
     spawnBirthTransient(organism) {
@@ -751,6 +762,42 @@ class CellFlowAudioEngine {
                 });
             }, (offset + windowDuration + duration + 0.08) * 1000);
         }
+    }
+
+    spawnColorSequencerHit(speedNorm, mods) {
+        const ctx = this.context;
+        const now = ctx.currentTime;
+        const velocityMult = mods ? mods.velocityMult : 1;
+        const freq = 220 + speedNorm * 440;
+        const duration = 0.12 - speedNorm * 0.06;
+        const peakGain = clamp(0.04 * velocityMult, 0.005, 0.12);
+
+        const osc = ctx.createOscillator();
+        const filter = ctx.createBiquadFilter();
+        const amp = ctx.createGain();
+
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, now);
+        osc.frequency.exponentialRampToValueAtTime(freq * 0.7, now + duration);
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(freq * 2, now);
+        filter.Q.setValueAtTime(5 + speedNorm * 8, now);
+        amp.gain.setValueAtTime(0.0001, now);
+        amp.gain.exponentialRampToValueAtTime(peakGain, now + 0.005);
+        amp.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+        osc.connect(filter);
+        filter.connect(amp);
+        amp.connect(this.master);
+
+        osc.start(now);
+        osc.stop(now + duration + 0.02);
+
+        window.setTimeout(() => {
+            [osc, filter, amp].forEach((node) => {
+                try { node.disconnect(); } catch {}
+            });
+        }, (duration + 0.1) * 1000);
     }
 
     getSharedLfo(params = {}) {
